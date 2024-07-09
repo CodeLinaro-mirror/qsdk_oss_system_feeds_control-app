@@ -7,6 +7,7 @@ PKG_RELEASE:=1.0.6
 
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://github.com/Wi-FiQuickTrack/Wi-FiQuickTrack-ControlAppC.git
+PKG_SOURCE_SUBMODULES:=skip
 PKG_BUILD_DIR:=$(BUILD_DIR)/$(PKG)-$(PKG_VERSION)
 PKG_MIRROR_MD5SUM:=skip
 PKG_MD5SUM:=skip
