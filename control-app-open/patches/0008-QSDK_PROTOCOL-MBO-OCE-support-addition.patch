@@ -19,11 +19,9 @@ Signed-off-by: Paulson Raja L <quic_lraja@quicinc.com>
  indigo_api_callback_dut.c | 12 ++++++++++++
  1 file changed, 12 insertions(+)
 
-diff --git a/indigo_api_callback_dut.c b/indigo_api_callback_dut.c
-index 09c73cf..7d3d73b 100644
 --- a/indigo_api_callback_dut.c
 +++ b/indigo_api_callback_dut.c
-@@ -314,6 +314,7 @@ static int generate_hostapd_config(char *output, int output_size, struct packet_
+@@ -314,6 +314,7 @@ static int generate_hostapd_config(char
      int semicolon_list_size = sizeof(semicolon_list) / sizeof(struct tlv_to_config_name);
      int hs20_icons_attached = 0;
      int is_multiple_bssid = 0;
@@ -31,13 +29,18 @@ index 09c73cf..7d3d73b 100644
  
  #if HOSTAPD_SUPPORT_MBSSID
      if ((wlanp->mbssid_enable && !wlanp->transmitter) || (band_first_wlan[wlanp->band])) {
-@@ -365,6 +366,17 @@ static int generate_hostapd_config(char *output, int output_size, struct packet_
+@@ -364,6 +365,21 @@ static int generate_hostapd_config(char
+             }
              continue;
          }
- 
++
 +        if (tlv->id == TLV_MBO) {
 +            memset(value, 0, sizeof(value));
++            if (tlv->len >= sizeof(value)) {
++                 continue;
++            }
 +            memcpy(value, tlv->value, tlv->len);
++            value[tlv->len] = '\0';
 +            mbo = atoi(value);
 +            if (mbo) {
 +                strlcat(output, "mbo=1\n", output_size);
@@ -45,10 +48,6 @@ index 09c73cf..7d3d73b 100644
 +            }
 +            continue;
 +        }
-+
+ 
          /* This is used when hostapd will use multiple lines to 
           * configure multiple items in the same configuration parameter
-          * (use semicolon to separate multiple configurations) */
--- 
-2.34.1
-
