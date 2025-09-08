@@ -4,6 +4,7 @@ PKG:=control-app
 PKG_NAME:=control-app-open
 PKG_VERSION:=20230811
 PKG_RELEASE:=1.0.6
+PKG_LICENSE:=ISC
 
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://github.com/Wi-FiQuickTrack/Wi-FiQuickTrack-ControlAppC.git
