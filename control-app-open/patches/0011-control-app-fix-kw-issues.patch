@@ -1,0 +1,152 @@
+From 54da19d4f8d9c0bfe2ef4dd5341d031d7094b72b Mon Sep 17 00:00:00 2001
+From: Codex <codex@openai.com>
+Date: Fri, 23 Oct 2026 12:45:00 +0530
+Subject: [PATCH] control-app: fix KW null-deref and non-terminated string issues
+
+Address reported KW issues in ACK wrapper allocation handling and TLV-to-string
+conversion paths.
+
+- Guard malloc dereferences in fill_wrapper_ack() and release partially
+  allocated resources on error.
+- Bound memcpy length and enforce null termination before atoi()/strcmp()
+  usage for TLV parsing paths.
+
+Signed-off-by: Rajat Soni <rajson@qti.qualcomm.com>
+---
+--- a/indigo_api.c	2026-10-23 12:23:34.274116532 +0530
++++ b/indigo_api.c	2026-10-23 12:41:25.355540277 +0530
+@@ -314,24 +314,59 @@
+ /* status: 0 - ACK, 1 - NACK */
+ /* reason: string for the reason code */
+ void fill_wrapper_ack(struct packet_wrapper *wrapper, int seq, int status, char *reason) {
++    size_t reason_len = reason ? strlen(reason) : 0;
++
+     wrapper->hdr.version = API_VERSION;
+     wrapper->hdr.type = API_CMD_ACK;
+     wrapper->hdr.seq = seq;
+     wrapper->hdr.reserved = API_RESERVED_BYTE;
+     wrapper->hdr.reserved2 = API_RESERVED_BYTE;
+ 
+-    wrapper->tlv_num =  2;
++    wrapper->tlv_num =  0;
++    wrapper->tlv[0] = NULL;
++    wrapper->tlv[1] = NULL;
+     wrapper->tlv[0] = malloc(sizeof(struct tlv_hdr));
++    if (!wrapper->tlv[0]) {
++        goto out_of_memory;
++    }
++    wrapper->tlv[0]->value = NULL;
+     wrapper->tlv[0]->id = TLV_STATUS;
+     wrapper->tlv[0]->len = 1;
+     wrapper->tlv[0]->value = (unsigned char*)malloc(wrapper->tlv[0]->len);
++    if (!wrapper->tlv[0]->value) {
++        goto out_of_memory;
++    }
+     wrapper->tlv[0]->value[0] = status;
+ 
+     wrapper->tlv[1] = malloc(sizeof(struct tlv_hdr));
++    if (!wrapper->tlv[1]) {
++        goto out_of_memory;
++    }
++    wrapper->tlv[1]->value = NULL;
+     wrapper->tlv[1]->id = TLV_MESSAGE;
+-    wrapper->tlv[1]->len = strlen(reason);
+-    wrapper->tlv[1]->value = (unsigned char*)malloc(wrapper->tlv[1]->len);
+-    memcpy(wrapper->tlv[1]->value, reason, wrapper->tlv[1]->len);
++    wrapper->tlv[1]->len = reason_len;
++    if (wrapper->tlv[1]->len > 0) {
++        wrapper->tlv[1]->value = (unsigned char*)malloc(wrapper->tlv[1]->len);
++        if (!wrapper->tlv[1]->value) {
++            goto out_of_memory;
++        }
++        memcpy(wrapper->tlv[1]->value, reason, wrapper->tlv[1]->len);
++    }
++    wrapper->tlv_num = 2;
++    return;
++
++out_of_memory:
++    indigo_logger(LOG_LEVEL_ERROR, "Failed to allocate memory in fill_wrapper_ack");
++    if (wrapper->tlv[1]) {
++        free(wrapper->tlv[1]->value);
++        free(wrapper->tlv[1]);
++        wrapper->tlv[1] = NULL;
++    }
++    if (wrapper->tlv[0]) {
++        free(wrapper->tlv[0]->value);
++        free(wrapper->tlv[0]);
++        wrapper->tlv[0] = NULL;
++    }
+ }
+ 
+ /* Provide the function to register the API handler */
+--- a/indigo_api_callback_dut.c	2026-10-23 12:23:34.278116522 +0530
++++ b/indigo_api_callback_dut.c	2026-10-23 12:30:39.641092737 +0530
+@@ -344,8 +344,11 @@
+         memset(cfg_item, 0, sizeof(cfg_item));
+ 
+         if (tlv->id == TLV_CHANNEL) {
++            size_t copy_len = 0;
+             memset(value, 0, sizeof(value));
+-            memcpy(value, tlv->value, tlv->len);
++            copy_len = tlv->len < (sizeof(value) - 1) ? tlv->len : (sizeof(value) - 1);
++            memcpy(value, tlv->value, copy_len);
++            value[copy_len] = '\0';
+             channel = atoi(value);
+             if (is_multiple_bssid) {
+                /* channel will be configured on the first wlan */
+@@ -367,8 +370,11 @@
+         }
+ 
+         if (tlv->id == TLV_MBO) {
++            size_t copy_len = 0;
+             memset(value, 0, sizeof(value));
+-            memcpy(value, tlv->value, tlv->len);
++            copy_len = tlv->len < (sizeof(value) - 1) ? tlv->len : (sizeof(value) - 1);
++            memcpy(value, tlv->value, copy_len);
++            value[copy_len] = '\0';
+             mbo = atoi(value);
+             if (mbo) {
+                 strlcat(output, "mbo=1\n", output_size);
+@@ -2195,6 +2201,9 @@
+     struct tlv_hdr *tlv = NULL;
+     struct wpa_ctrl *w = NULL;
+ 
++    memset(reason_code, 0, sizeof(reason_code));
++    memset(candidate_list, 0, sizeof(candidate_list));
++
+     /* Open wpa_supplicant UDS socket */
+     w = wpa_ctrl_open(get_wpas_ctrl_path());
+     if (!w) {
+@@ -2206,7 +2215,9 @@
+     /* TLV: BTMQUERY_REASON_CODE */
+     tlv = find_wrapper_tlv_by_id(req, TLV_BTMQUERY_REASON_CODE);
+     if (tlv) {
+-        memcpy(reason_code, tlv->value, tlv->len);
++        size_t copy_len = tlv->len < (sizeof(reason_code) - 1) ? tlv->len : (sizeof(reason_code) - 1);
++        memcpy(reason_code, tlv->value, copy_len);
++        reason_code[copy_len] = '\0';
+     } else {
+         goto done;
+     }
+@@ -2214,7 +2225,9 @@
+     /* TLV: TLV_CANDIDATE_LIST */
+     tlv = find_wrapper_tlv_by_id(req, TLV_CANDIDATE_LIST);
+     if (tlv) {
+-        memcpy(candidate_list, tlv->value, tlv->len);
++        size_t copy_len = tlv->len < (sizeof(candidate_list) - 1) ? tlv->len : (sizeof(candidate_list) - 1);
++        memcpy(candidate_list, tlv->value, copy_len);
++        candidate_list[copy_len] = '\0';
+     }
+ 
+     memset(buffer, 0, sizeof(buffer));
+@@ -3165,7 +3178,9 @@
+     memset(ip_addr, 0, sizeof(ip_addr));
+     tlv = find_wrapper_tlv_by_id(req, TLV_STATIC_IP);
+     if (tlv) { /* DHCP Server */
+-        memcpy(ip_addr, tlv->value, tlv->len);
++        size_t copy_len = tlv->len < (sizeof(ip_addr) - 1) ? tlv->len : (sizeof(ip_addr) - 1);
++        memcpy(ip_addr, tlv->value, copy_len);
++        ip_addr[copy_len] = '\0';
+         if (!strcmp("0.0.0.0", ip_addr)) {
+             snprintf(ip_addr, sizeof(ip_addr), DHCP_SERVER_IP);
+         }
